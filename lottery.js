@@ -29,11 +29,11 @@
   var TEMPLATE =
     '<img class="hero" data-l="hero" hidden alt="" width="1536" height="816">' +
     '<header>' +
-      '<span class="eyebrow" data-l="range">Online cards 100 – 699</span>' +
+      '<span class="eyebrow" data-l="range">Cards 100–1300</span>' +
       '<h1 data-l="title">Prize Coupon Draw</h1>' +
       '<p class="drawinfo" data-l="drawInfo" hidden></p>' +
       '<p class="notice" data-l="notice" hidden></p>' +
-      '<p class="muted">Choose a card number below. Each card hides its own draw number, just like the scratch panel on a printed card. Tap a card, enter your details and it is revealed. Once a card is taken, nobody else can get it or its draw number.</p>' +
+      '<p class="muted">Choose a card number below. Each card hides its own draw number, just like the scratch panel on a printed card. Tap a card, enter your details and it is revealed. Once a card is taken, online or as a printed card, it disappears from this list.</p>' +
     '</header>' +
     '<section class="ticket" data-l="mine" hidden aria-live="polite">' +
       '<span class="t-label">Your coupon</span>' +
@@ -86,7 +86,7 @@
     if (opts.notice) { $.notice.textContent = opts.notice; $.notice.hidden = false; }
     if (opts.banner && opts.banner.src) { $.hero.src = opts.banner.src; $.hero.alt = opts.banner.alt || ''; $.hero.hidden = false; }
 
-    var MIN = 100, MAX = 1300, FROM = 100, TO = 699, TOTAL = 600, requireCode = false, isOpen = true, numbersLeft = null;
+    var MIN = 100, MAX = 1300, FROM = 100, TO = 1300, TOTAL = 1201, requireCode = false, isOpen = true, numbersLeft = null;
     var used = {}, tiles = {}, current = null, busy = false, loaded = false;
     var reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
     var me = load();
@@ -126,7 +126,7 @@
       if (loaded) {
         var tilesLeft = TOTAL - usedCount;
         $.left.innerHTML = '';
-        $.left.appendChild(document.createTextNode(fmt(tilesLeft) + ' of ' + fmt(TOTAL) + ' online cards left'));
+        $.left.appendChild(document.createTextNode(fmt(tilesLeft) + ' of ' + fmt(TOTAL) + ' cards left'));
         var s = document.createElement('small'); s.textContent = 'updates live'; $.left.appendChild(s);
       }
       renderMine();
@@ -143,7 +143,7 @@
       var rangeChanged = s.onlineFrom !== FROM || s.onlineTo !== TO;
       MIN = s.min; MAX = s.max; FROM = s.onlineFrom; TO = s.onlineTo; TOTAL = s.total;
       requireCode = !!s.requireCode; isOpen = !!s.open; numbersLeft = s.left;
-      $.range.textContent = 'Online cards ' + FROM + '–' + TO + ' · Printed cards ' + (TO + 1) + '–' + MAX;
+      $.range.textContent = 'Cards ' + FROM + '–' + TO + ' · Also sold as printed scratch cards';
       if (s.title) { $.title.textContent = s.title; document.title = s.title; }
       show($.drawInfo, s.drawInfo || '');
       $.codeRow.hidden = !requireCode;
@@ -154,7 +154,7 @@
       paint();
       if (me) show($.err, '');
       else if (!isOpen) show($.err, 'Online sales are closed right now.');
-      else if (numbersLeft === 0) show($.err, 'All online cards have been taken.');
+      else if (numbersLeft === 0) show($.err, 'All cards have been taken.');
       else show($.err, '');
       if (current && used[current] && !busy && $.done.hidden) {
         show($.sheetErr, 'Someone just took card ' + current + '. Please close this and choose another card.');

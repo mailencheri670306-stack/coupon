@@ -11,8 +11,10 @@
  *
  * Sheets:
  *   Settings – range, online range, open/closed, coupon codes, draw date text
- *   Pool     – every card: channel (online/printed), hidden number, sale status
- *   Print    – printed cards only: card number + scratch number, plus who bought it
+ *   Pool     – every card: hidden number, online sale status
+ *   Print    – every card: card number + scratch number to print, status, and who bought the
+ *              printed card (fill Sold to / Phone when a printed card is sold — the card then
+ *              disappears from the website)
  *   Draws    – one row per online sale (the official online result list)
  *   Log      – every event, hash-chained so later edits are detectable
  *   Codes    – optional one-time coupon codes
@@ -22,7 +24,8 @@ const SHEETS = { settings: 'Settings', pool: 'Pool', print: 'Print', draws: 'Dra
 const DRAW_HEADERS = ['Draw #', 'Card number', 'Draw number', 'Name', 'Phone', 'Coupon code', 'Sold at (local)', 'Sold at (UTC)', 'Online cards left before', 'Sale ID'];
 const LOG_HEADERS = ['Time (UTC)', 'Event', 'Name', 'Phone', 'Coupon code', 'Card', 'Draw number', 'Details', 'Device', 'Hash'];
 const POOL_HEADERS = ['Card number', 'Channel', 'Draw number (hidden)', 'Status', 'Draw #', 'Sold at (UTC)'];
-const PRINT_HEADERS = ['Card number', 'Scratch number', 'Sold to (name)', 'Phone', 'Notes'];
+const PRINT_HEADERS = ['Card number', 'Scratch number', 'Status (set by script)', 'Sold to (name)', 'Phone', 'Notes'];
+const SOLD_ONLINE_MARK = 'SOLD ONLINE – do not sell';
 const CODE_HEADERS = ['Code', 'Status', 'Used by phone', 'Used at (UTC)', 'Card'];
 const STATUS_CACHE_KEY = 'status-v3';
 
@@ -57,12 +60,13 @@ function getStatus() {
   if (hit) return JSON.parse(hit);
   const s = getSettings_();
   const rows = readPool_();
+  const physical = readPhysicalSales_();
   const usedTiles = [];
   let left = 0, total = 0;
   rows.forEach(r => {
-    if (r[1] !== 'online') return;
+    if (r[0] < s.onlineFrom || r[0] > s.onlineTo) return;
     total++;
-    if (r[3] === 'available') left++; else usedTiles.push(r[0]);
+    if (r[3] === 'available' && !physical[r[0]]) left++; else usedTiles.push(r[0]);
   });
   const out = {
     open: s.open, left: left, total: total, min: s.min, max: s.max,
@@ -71,6 +75,25 @@ function getStatus() {
   };
   try { cache.put(STATUS_CACHE_KEY, JSON.stringify(out), 5); } catch (e) {}
   return out;
+}
+
+/** Cards sold as printed scratch cards: Print tab rows where Sold to or Phone is filled in. */
+function readPhysicalSales_() {
+  const sh = ss_().getSheetByName(SHEETS.print);
+  const out = {};
+  if (!sh || sh.getLastRow() < 2) return out;
+  sh.getRange(2, 1, sh.getLastRow() - 1, 6).getDisplayValues().forEach((r, i) => {
+    if (String(r[3]).trim() || String(r[4]).trim()) out[Number(r[0])] = { name: r[3], phone: r[4], notes: r[5], row: i + 2 };
+  });
+  return out;
+}
+
+function markPrintSoldOnline_(card) {
+  const sh = ss_().getSheetByName(SHEETS.print);
+  if (!sh || sh.getLastRow() < 2) return;
+  const cards = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
+  const i = cards.findIndex(r => r[0] === card);
+  if (i >= 0) sh.getRange(i + 2, 3).setValue(SOLD_ONLINE_MARK);
 }
 
 function logVisit(device) {
@@ -126,19 +149,21 @@ function draw(form) {
 
     const pool = sheet_(SHEETS.pool);
     const rows = readPool_();
+    const physical = readPhysicalSales_();
     const ti = rows.findIndex(r => r[0] === tile);
-    if (ti < 0 || rows[ti][1] !== 'online') { log_('rejected_not_online_card', who, device); return { status: 'error', message: 'That card isn\'t sold online.' }; }
-    if (rows[ti][3] !== 'available') {
-      log_('rejected_card_taken', who, device);
+    if (ti < 0) { log_('rejected_not_online_card', who, device); return { status: 'error', message: 'That card doesn\'t exist.' }; }
+    if (rows[ti][3] !== 'available' || physical[tile]) {
+      log_('rejected_card_taken', who, device, physical[tile] ? 'card already sold as a printed card' : '');
+      CacheService.getScriptCache().remove(STATUS_CACHE_KEY);
       return {
         status: 'tile_taken',
-        message: 'Someone just took card ' + tile + '. Please choose another card.',
-        usedTiles: rows.filter(r => r[1] === 'online' && r[3] !== 'available').map(r => r[0])
+        message: 'Card ' + tile + ' has just been taken. Please choose another card.',
+        usedTiles: rows.filter(r => r[0] >= s.onlineFrom && r[0] <= s.onlineTo && (r[3] !== 'available' || physical[r[0]])).map(r => r[0])
       };
     }
 
     const number = rows[ti][2];
-    const leftBefore = rows.filter(r => r[1] === 'online' && r[3] === 'available').length;
+    const leftBefore = rows.filter(r => r[0] >= s.onlineFrom && r[0] <= s.onlineTo && r[3] === 'available' && !physical[r[0]]).length;
     const now = new Date();
     const utc = now.toISOString();
     const local = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
@@ -146,6 +171,7 @@ function draw(form) {
     const saleId = Utilities.getUuid();
 
     pool.getRange(ti + 2, 4, 1, 3).setValues([['sold online', drawNo, utc]]);
+    markPrintSoldOnline_(tile);
     draws.appendRow([drawNo, tile, number, name, "'" + phone, code, local, utc, leftBefore, saleId]);
     if (codeRow > 0) sheet_(SHEETS.codes).getRange(codeRow, 2, 1, 4).setValues([['used', "'" + phone, utc, tile]]);
     log_('card_sold_online', who, device, 'card ' + tile + ' revealed ' + number + ', draw #' + drawNo + ', ' + leftBefore + ' online cards left before, id ' + saleId, number);
@@ -207,7 +233,7 @@ function setup_(fromMenu) {
       ['min', 100, 'Lowest card / draw number'],
       ['max', 1300, 'Highest card / draw number'],
       ['online_from', 100, 'First card number sold online'],
-      ['online_to', 699, 'Last card number sold online (the rest are printed scratch cards)'],
+      ['online_to', 1300, 'Last card number shown online. Any card can also be sold as a printed scratch card'],
       ['open', true, 'TRUE = online sales open, FALSE = closed'],
       ['require_code', false, 'TRUE = customers must enter a one-time coupon code from the Codes sheet'],
       ['draw_info', 'Draw: 21 January, 10 pm', 'Line shown under the banner on the customer page'],
@@ -224,10 +250,11 @@ function setup_(fromMenu) {
   if (!hasNumbers) {
     writeNewNumbers_(ss, s);
   } else {
-    // keep numbers, clear online sales
+    // keep numbers, clear online sales; rebuild the Print tab for every card, keeping printed-card sales
     const n = pool.getLastRow() - 1;
-    const rows = pool.getRange(2, 1, n, 6).getValues().map(r => [r[0], r[1], r[2], r[1] === 'online' ? 'available' : 'printed', '', '']);
+    const rows = pool.getRange(2, 1, n, 6).getValues().map(r => [r[0], channel_(r[0], s), r[2], 'available', '', '']);
     pool.getRange(2, 1, n, 6).setValues(rows);
+    writePrint_(ss, rows);
   }
 
   resetSheet_(ss, SHEETS.draws, DRAW_HEADERS);
@@ -247,8 +274,8 @@ function setup_(fromMenu) {
   const def = ss.getSheetByName('Sheet1');
   if (def && def.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(def);
   (ui ? alert_ : (t, m) => Logger.log(t + '\n' + m))('Ready',
-    'Spreadsheet: ' + ss.getUrl() + '\n\n' + (hasNumbers ? 'Online sales cleared. Card numbers are unchanged.' :
-      'Card numbers and hidden draw numbers created for ' + s.min + '–' + s.max + '. Online: ' + s.onlineFrom + '–' + s.onlineTo + '. The Print tab lists the scratch cards to print.') +
+    'Spreadsheet: ' + ss.getUrl() + '\n\n' + (hasNumbers ? 'Online sales cleared. Card numbers are unchanged. Print tab: every card, printed-card sales kept.' :
+      'Card numbers and hidden draw numbers created for ' + s.min + '–' + s.max + '. Shown online: ' + s.onlineFrom + '–' + s.onlineTo + '. The Print tab lists every card with its scratch number.') +
     '\n\nIf you have not deployed yet: Deploy → New deployment → Web app, Execute as: Me, Who has access: Anyone.');
 }
 
@@ -280,23 +307,36 @@ function writeNewNumbers_(ss, s) {
     const j = secureRandomInt_(i + 1);
     const t = hidden[i]; hidden[i] = hidden[j]; hidden[j] = t;
   }
-  const poolRows = values.map((card, i) => {
-    const online = card >= s.onlineFrom && card <= s.onlineTo;
-    return [card, online ? 'online' : 'printed', hidden[i], online ? 'available' : 'printed', '', ''];
-  });
+  const poolRows = values.map((card, i) => [card, channel_(card, s), hidden[i], 'available', '', '']);
   const pool = resetSheet_(ss, SHEETS.pool, POOL_HEADERS);
   pool.getRange(2, 1, poolRows.length, POOL_HEADERS.length).setValues(poolRows);
-
-  const printRows = poolRows.filter(r => r[1] === 'printed').map(r => [r[0], r[2], '', '', '']);
-  const print = resetSheet_(ss, SHEETS.print, PRINT_HEADERS);
-  if (printRows.length) {
-    print.getRange(2, 1, printRows.length, PRINT_HEADERS.length).setValues(printRows);
-    print.getRange(2, 4, printRows.length, 1).setNumberFormat('@');
-    print.protect().setDescription('Card and scratch numbers are fixed; only fill Sold to / Phone / Notes')
-      .setUnprotectedRanges([print.getRange(2, 3, printRows.length, 3)]).setWarningOnly(true);
-  }
-  print.autoResizeColumns(1, 2);
+  writePrint_(ss, poolRows, true);
   PropertiesService.getScriptProperties().setProperty('MAPPING_HASH', mappingHash_(poolRows));
+}
+
+function channel_(card, s) { return card >= s.onlineFrom && card <= s.onlineTo ? 'online + printed' : 'printed only'; }
+
+/** Writes the Print tab for every card. Keeps Sold to / Phone / Notes already typed (unless fresh is true). */
+function writePrint_(ss, poolRows, fresh) {
+  const keep = fresh ? {} : readPhysicalSales_();
+  const old = ss.getSheetByName(SHEETS.print);
+  if (!fresh && old && old.getLastRow() > 1) {
+    // also keep notes-only rows
+    old.getRange(2, 1, old.getLastRow() - 1, old.getLastColumn()).getDisplayValues().forEach(r => {
+      const card = Number(r[0]);
+      if (!keep[card] && r.length >= 6 && String(r[5]).trim()) keep[card] = { name: '', phone: '', notes: r[5] };
+    });
+  }
+  const rows = poolRows.map(r => {
+    const k = keep[r[0]] || {};
+    return [r[0], r[2], r[3] === 'sold online' ? SOLD_ONLINE_MARK : '', k.name || '', k.phone || '', k.notes || ''];
+  });
+  const print = resetSheet_(ss, SHEETS.print, PRINT_HEADERS);
+  print.getRange(2, 1, rows.length, PRINT_HEADERS.length).setValues(rows);
+  print.getRange(2, 5, rows.length, 1).setNumberFormat('@');
+  print.protect().setDescription('Card, scratch number and status are set by the script; only fill Sold to / Phone / Notes')
+    .setUnprotectedRanges([print.getRange(2, 4, rows.length, 3)]).setWarningOnly(true);
+  print.autoResizeColumns(1, 3);
 }
 
 function openDraw() { setSetting_('open', true); log_('sales_opened_by_admin', {}, ''); SpreadsheetApp.getUi().alert('Online sales are open.'); }
@@ -311,16 +351,14 @@ function findHolder() {
   const row = readPool_().find(x => x[2] === num);
   if (!row) { ui.alert('No card has draw number ' + r.getResponseText().trim() + '.'); return; }
   const card = row[0];
-  let msg = 'Draw number ' + num + ' is on card ' + card + ' (' + (row[1] === 'online' ? 'sold online' : 'printed scratch card') + ').\n\n';
-  if (row[1] === 'online') {
-    const d = sheet_(SHEETS.draws), dn = d.getLastRow() - 1;
-    const sale = dn > 0 ? d.getRange(2, 1, dn, 8).getValues().find(x => x[1] === card) : null;
-    msg += sale ? 'Bought by ' + sale[3] + ', phone ' + sale[4] + ', on ' + sale[6] + ' (draw #' + sale[0] + ').' : 'This online card has NOT been sold.';
-  } else {
-    const p = sheet_(SHEETS.print), pn = p.getLastRow() - 1;
-    const pr = pn > 0 ? p.getRange(2, 1, pn, 5).getDisplayValues().find(x => Number(x[0]) === card) : null;
-    msg += pr && (pr[2] || pr[3]) ? 'Recorded as sold to ' + (pr[2] || '—') + ', phone ' + (pr[3] || '—') + (pr[4] ? ' (' + pr[4] + ')' : '') + '.' : 'No buyer is recorded in the Print tab. The holder must show the physical card with card number ' + card + '.';
-  }
+  let msg = 'Draw number ' + num + ' is on card ' + card + '.\n\n';
+  const d = sheet_(SHEETS.draws), dn = d.getLastRow() - 1;
+  const sale = dn > 0 ? d.getRange(2, 1, dn, 8).getValues().find(x => x[1] === card) : null;
+  const phys = readPhysicalSales_()[card];
+  if (sale) msg += 'Sold ONLINE to ' + sale[3] + ', phone ' + sale[4] + ', on ' + sale[6] + ' (sale #' + sale[0] + ').\n';
+  if (phys) msg += 'Recorded as PRINTED card sold to ' + (phys.name || '—') + ', phone ' + (phys.phone || '—') + (phys.notes ? ' (' + phys.notes + ')' : '') + '.\n';
+  if (sale && phys) msg += '\nWARNING: this card is recorded as sold both online and as a printed card. Check with both buyers.';
+  if (!sale && !phys) msg += 'No sale is recorded for this card. If someone holds the printed card ' + card + ', they must show it.';
   log_('holder_lookup_by_admin', { tile: card }, '', 'draw number ' + num, num);
   ui.alert('Draw number ' + num, msg, ui.ButtonSet.OK);
 }
@@ -364,12 +402,13 @@ function integrityCheck() {
   const stored = PropertiesService.getScriptProperties().getProperty('MAPPING_HASH');
   if (stored && mappingHash_(pv) !== stored) issues.push('The card → draw number list in Pool was changed after it was created.');
 
-  // 2. Printed cards match Pool
+  // 2. Print tab matches Pool
   const print = sheet_(SHEETS.print);
   const prn = print.getLastRow() - 1;
   (prn > 0 ? print.getRange(2, 1, prn, 2).getValues() : []).forEach(r => {
     if (numberOf[r[0]] !== r[1]) issues.push('Print tab: card ' + r[0] + ' shows scratch number ' + r[1] + ', but Pool says ' + numberOf[r[0]] + '.');
   });
+  const physical = readPhysicalSales_();
 
   // 3. Online sales
   const draws = sheet_(SHEETS.draws);
@@ -378,16 +417,15 @@ function integrityCheck() {
   const seenCard = {}, seenPhone = {};
   d.forEach((r, i) => {
     const no = r[0], card = r[1], num = r[2], phone = String(r[4]);
-    if (no !== i + 1) issues.push('Draws row ' + (i + 2) + ': draw # is ' + no + ', expected ' + (i + 1) + '.');
-    if (card < s.onlineFrom || card > s.onlineTo) issues.push('Card ' + card + ' was sold online but is outside the online range.');
+    if (no !== i + 1) issues.push('Draws row ' + (i + 2) + ': sale # is ' + no + ', expected ' + (i + 1) + '.');
     if (numberOf[card] !== num) issues.push('Card ' + card + ' revealed ' + num + ', but its fixed draw number is ' + numberOf[card] + '.');
-    if (seenCard[card]) issues.push('Card ' + card + ' was sold twice (draws #' + seenCard[card] + ' and #' + no + ').');
-    if (seenPhone[phone]) issues.push('Phone ' + phone + ' bought twice (draws #' + seenPhone[phone] + ' and #' + no + ').');
+    if (seenCard[card]) issues.push('Card ' + card + ' was sold online twice (sales #' + seenCard[card] + ' and #' + no + ').');
+    if (seenPhone[phone]) issues.push('Phone ' + phone + ' bought online twice (sales #' + seenPhone[phone] + ' and #' + no + ').');
+    if (physical[card]) issues.push('Card ' + card + ' is recorded as sold BOTH online (sale #' + no + ') and as a printed card (Print row ' + physical[card].row + ').');
     seenCard[card] = no; seenPhone[phone] = no;
   });
-  let soldInPool = 0;
   pv.forEach(r => {
-    if (r[3] === 'sold online') { soldInPool++; if (!seenCard[r[0]]) issues.push('Card ' + r[0] + ' is marked sold in Pool but has no row in Draws.'); }
+    if (r[3] === 'sold online') { if (!seenCard[r[0]]) issues.push('Card ' + r[0] + ' is marked sold in Pool but has no row in Draws.'); }
     else if (seenCard[r[0]]) issues.push('Card ' + r[0] + ' is in Draws but not marked sold in Pool.');
   });
 
@@ -409,10 +447,10 @@ function integrityCheck() {
   if (soldInLog !== d.length) issues.push('Log shows ' + soldInLog + ' online sales, but Draws has ' + d.length + ' rows.');
 
   log_('integrity_check_by_admin', {}, '', issues.length ? issues.length + ' issue(s)' : 'passed');
-  const onlineTotal = pv.filter(r => r[1] === 'online').length;
-  const summary = d.length + ' of ' + onlineTotal + ' online cards sold, ' + (pv.length - onlineTotal) + ' printed cards, ' + ln + ' log entries.\n\n';
+  const physCount = Object.keys(physical).length;
+  const summary = d.length + ' cards sold online, ' + physCount + ' printed cards recorded as sold, ' + (pv.length - d.length - physCount) + ' cards free, ' + ln + ' log entries.\n\n';
   ui.alert(issues.length ? 'Integrity check: ' + issues.length + ' issue(s)' : 'Integrity check passed',
-    summary + (issues.length ? issues.slice(0, 25).join('\n') : 'Every card has its own draw number and none has changed, the Print tab matches, every online card was sold once, every phone bought once, and the log hash chain is unbroken.'),
+    summary + (issues.length ? issues.slice(0, 25).join('\n') : 'Every card has its own draw number and none has changed, the Print tab matches, no card was sold twice (online or printed), every phone bought once online, and the log hash chain is unbroken.'),
     ui.ButtonSet.OK);
 }
 
@@ -464,12 +502,11 @@ function getSettings_() {
   if (sh && sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(r => map[String(r[0]).trim()] = r[1]);
   const bool = v => v === true || String(v).toUpperCase() === 'TRUE';
   const min = parseInt(map.min, 10) || 100, max = parseInt(map.max, 10) || 1300;
-  const half = min + Math.floor((max - min + 1) / 2) - 1;
-  return {
+    return {
     title: String(map.title || 'Prize Coupon Draw'),
     min: min, max: max,
     onlineFrom: parseInt(map.online_from, 10) || min,
-    onlineTo: parseInt(map.online_to, 10) || half,
+    onlineTo: parseInt(map.online_to, 10) || max,
     open: map.open === undefined ? true : bool(map.open),
     requireCode: bool(map.require_code),
     drawInfo: String(map.draw_info || ''),

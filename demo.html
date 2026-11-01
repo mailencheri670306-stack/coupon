@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Prize Coupon Draw · Demo</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;900&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="lottery.css?v=5">
+<link rel="stylesheet" href="lottery.css?v=6">
 <style>
 .banner{background:var(--gold);color:var(--gold-ink);font-weight:600;font-size:14px;text-align:center;padding:8px max(16px,env(safe-area-inset-right)) 8px max(16px,env(safe-area-inset-left))}
 .shell{max-width:760px;margin:0 auto;padding:16px max(16px,env(safe-area-inset-right)) 0 max(16px,env(safe-area-inset-left));display:grid;gap:12px}
@@ -58,8 +58,8 @@ td.num{font-family:var(--display);font-weight:700;font-size:20px}
   <div class="row"><h2>Organizer desk</h2><button class="btn-plain" id="reset" type="button">Reset demo</button></div>
   <div class="stats">
     <div class="stat"><b id="sSold">0</b><span>Sold online</span></div>
-    <div class="stat"><b id="sLeft">0</b><span>Online left</span></div>
-    <div class="stat"><b id="sPrinted">0</b><span>Printed cards</span></div>
+    <div class="stat"><b id="sPrinted">0</b><span>Sold printed</span></div>
+    <div class="stat"><b id="sLeft">0</b><span>Cards free</span></div>
     <div class="stat"><b id="sEvents">0</b><span>Log entries</span></div>
   </div>
   <div class="check" id="check"></div>
@@ -75,8 +75,17 @@ td.num{font-family:var(--display);font-weight:700;font-size:20px}
   <h2>Online sales</h2>
   <div class="tablewrap" id="draws"></div>
 
-  <h2>Print list for scratch cards</h2>
-  <p class="muted" style="font-size:14px">Card number goes in the card-number box, scratch number under the silver scratch panel. In the real version this is the Print tab of the Google Sheet, with columns to record who bought each card.</p>
+  <h2>Record a printed-card sale</h2>
+  <p class="muted" style="font-size:14px">When the committee hands over a printed scratch card, they record it here. In the real version they type the name or phone next to the card in the Print tab of the Google Sheet. The card then disappears from the website.</p>
+  <form class="find" id="phys" novalidate style="flex-wrap:wrap">
+    <label class="sr" for="physCard">Card number</label><input id="physCard" type="number" inputmode="numeric" placeholder="Card no.">
+    <label class="sr" for="physName">Buyer name</label><input id="physName" placeholder="Buyer name" style="width:160px">
+    <button class="btn-plain" type="submit">Record sale</button>
+  </form>
+  <p id="physOut" class="muted" aria-live="polite"></p>
+
+  <h2>Print list (every card)</h2>
+  <p class="muted" style="font-size:14px">Card number goes in the card-number box, scratch number under the silver scratch panel. Status shows cards already sold online, which must not be handed out as printed cards.</p>
   <div class="tablewrap" id="print"></div>
 
   <h2>Activity log</h2>
@@ -84,10 +93,10 @@ td.num{font-family:var(--display);font-weight:700;font-size:20px}
   <p class="muted" style="font-size:13px">In the real version these lists live in the organizer's Google Sheet, with a tamper-evident log, an integrity check and open/close controls.</p>
 </section>
 
-<script src="lottery.js?v=5"></script>
+<script src="lottery.js?v=6"></script>
 <script>
 (function(){
-  var MIN = 100, MAX = 1300, FROM = 100, TO = 699, KEY = 'coupon-lottery-demo-v3';
+  var MIN = 100, MAX = 1300, FROM = 100, TO = 1300, KEY = 'coupon-lottery-demo-v4';
   var BANNER_ALT = 'Mylanjari Bhagavathi Puthiya Bhagavathi Kshetram prize coupon (മൈലാഞ്ചരി ഭഗവതി പുതിയ ഭഗവതി ക്ഷേത്രം സമ്മാന കൂപ്പൺ). Prizes: 1st scooter, 2nd fridge, 3rd TV, 4th mobile phone, 5th washing machine, 6th 2 smart watches, 7th 5 electric kettles, 8th 5 pressure cookers.';
   var $ = function(id){ return document.getElementById(id); };
   var state;
@@ -104,19 +113,19 @@ td.num{font-family:var(--display);font-weight:700;font-size:20px}
     var map = {}; for (var c = MIN; c <= MAX; c++) map[c] = h[c - MIN];
     return map;
   }
-  function fresh(keepNumbers){ return { numbers: keepNumbers || makeNumbers(), sold: {}, draws: [], log: [] }; }
+  function fresh(keepNumbers){ return { numbers: keepNumbers || makeNumbers(), sold: {}, draws: [], physical: {}, log: [] }; }
   function save(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} }
   try{ state = JSON.parse(localStorage.getItem(KEY) || 'null'); }catch(e){ state = null; }
-  if (!state || !state.numbers) { state = fresh(); save(); }
+  if (!state || !state.numbers || !state.physical) { state = fresh(); save(); }
 
   function log(type, who, number, details){
     who = who || {};
     state.log.push({ t: new Date().toISOString(), type: type, name: who.name || '', phone: who.phone || '', tile: who.tile == null ? '' : who.tile, n: number == null ? '' : number, d: details || '' });
   }
   function normPhone(p){ var s = String(p || '').trim(), d = s.replace(/\D/g, ''); return d.length < 6 || d.length > 15 ? '' : (s[0] === '+' ? '+' : '') + d; }
-  function usedTiles(){ return Object.keys(state.sold).map(Number); }
+  function usedTiles(){ return Object.keys(state.sold).concat(Object.keys(state.physical)).map(Number); }
   function onlineTotal(){ return TO - FROM + 1; }
-  function onlineLeft(){ return onlineTotal() - state.draws.length; }
+  function onlineLeft(){ return onlineTotal() - state.draws.length - Object.keys(state.physical).length; }
   function later(v){ return new Promise(function(r){ setTimeout(function(){ r(v); }, 250); }); }
 
   // Same rules as the real backend
@@ -128,7 +137,7 @@ td.num{font-family:var(--display);font-weight:700;font-size:20px}
     if (!(tile >= FROM && tile <= TO)) { log('rejected_not_online_card', who); return { status: 'error', message: 'That card isn\'t sold online.' }; }
     var prior = state.draws.filter(function(d){ return d.phone === phone; })[0];
     if (prior) { log('repeat_attempt_returned_existing', who, prior.n, 'already has card ' + prior.tile); return { status: 'existing', tile: prior.tile, number: prior.n, drawNo: prior.no }; }
-    if (state.sold[tile]) { log('rejected_card_taken', who); return { status: 'tile_taken', message: 'Someone just took card ' + tile + '. Please choose another card.', usedTiles: usedTiles() }; }
+    if (state.sold[tile] || state.physical[tile]) { log('rejected_card_taken', who); return { status: 'tile_taken', message: 'Someone just took card ' + tile + '. Please choose another card.', usedTiles: usedTiles() }; }
     var num = state.numbers[tile], no = state.draws.length + 1, left = onlineLeft();
     state.sold[tile] = no;
     state.draws.push({ no: no, tile: tile, n: num, name: name, phone: phone, t: new Date().toISOString(), before: left });
@@ -150,7 +159,7 @@ td.num{font-family:var(--display);font-weight:700;font-size:20px}
   $('simulate').addEventListener('click', function(){
     for (var i = 0; i < 5; i++) {
       var free = [];
-      for (var v = FROM; v <= TO; v++) if (!state.sold[v]) free.push(v);
+      for (var v = FROM; v <= TO; v++) if (!state.sold[v] && !state.physical[v]) free.push(v);
       if (!free.length) break;
       sell({ tile: free[randInt(free.length)], name: GUESTS[randInt(GUESTS.length)] + ' (demo)', phone: '+9198' + String(10000000 + randInt(89999999)) });
     }
@@ -170,12 +179,12 @@ td.num{font-family:var(--display);font-weight:700;font-size:20px}
   function renderAdmin(){
     $('sSold').textContent = state.draws.length;
     $('sLeft').textContent = onlineLeft();
-    $('sPrinted').textContent = MAX - TO;
+    $('sPrinted').textContent = Object.keys(state.physical).length;
     $('sEvents').textContent = state.log.length;
 
     var seen = {}, dup = 0, mism = 0, t = {}, p = {};
     for (var c = MIN; c <= MAX; c++) { if (seen[state.numbers[c]]) dup++; seen[state.numbers[c]] = 1; }
-    state.draws.forEach(function(d){ if (t[d.tile] || p[d.phone]) dup++; if (state.numbers[d.tile] !== d.n) mism++; t[d.tile] = p[d.phone] = 1; });
+    state.draws.forEach(function(d){ if (t[d.tile] || p[d.phone] || state.physical[d.tile]) dup++; if (state.numbers[d.tile] !== d.n) mism++; t[d.tile] = p[d.phone] = 1; });
     var ok = !dup && !mism, ck = $('check');
     ck.className = 'check ' + (ok ? 'ok' : 'bad');
     ck.textContent = ok ? 'Integrity check passed: all ' + (MAX - MIN + 1) + ' cards have their own draw number, every online sale revealed its card\'s fixed number, and every card and phone was used once (' + state.draws.length + ' online sales).' : (dup + mism) + ' problem(s) found.';
@@ -187,8 +196,8 @@ td.num{font-family:var(--display);font-weight:700;font-size:20px}
     })));
 
     var pr = $('print'); pr.textContent = '';
-    var rows = []; for (var c2 = TO + 1; c2 <= MAX; c2++) rows.push(row([[c2, 'num'], [state.numbers[c2], 'num'], ['', ''], ['', '']]));
-    pr.appendChild(table(['Card no. (print in box)', 'Scratch number (under panel)', 'Sold to', 'Phone'], rows));
+    var rows = []; for (var c2 = MIN; c2 <= MAX; c2++) rows.push(row([[c2, 'num'], [state.numbers[c2], 'num'], [state.sold[c2] ? 'SOLD ONLINE – do not sell' : (state.physical[c2] ? 'Sold (printed)' : ''), ''], [state.physical[c2] || '', '']]));
+    pr.appendChild(table(['Card no. (print in box)', 'Scratch number (under panel)', 'Status', 'Sold to'], rows));
 
     var l = $('log'); l.textContent = '';
     l.appendChild(table(['Time', 'Event', 'Name', 'Phone', 'Card', 'Draw number', 'Details'], state.log.slice().reverse().map(function(r){
@@ -204,13 +213,20 @@ td.num{font-family:var(--display);font-weight:700;font-size:20px}
     var num = parseInt($('lookupIn').value, 10), out = $('lookupOut'), card = null;
     for (var c = MIN; c <= MAX; c++) if (state.numbers[c] === num) { card = c; break; }
     if (card === null) { out.textContent = 'No card has draw number ' + ($('lookupIn').value || '') + '. Draw numbers run ' + MIN + '–' + MAX + '.'; return; }
-    if (card >= FROM && card <= TO) {
-      var sale = state.draws.filter(function(d){ return d.tile === card; })[0];
-      out.textContent = 'Draw number ' + num + ' is on online card ' + card + '. ' + (sale ? 'Bought by ' + sale.name + ', phone ' + sale.phone + ' (sale #' + sale.no + ').' : 'This online card has not been sold.');
-    } else {
-      out.textContent = 'Draw number ' + num + ' is on printed scratch card ' + card + '. The winner must show the physical card with card number ' + card + '.';
-    }
+    var sale = state.draws.filter(function(d){ return d.tile === card; })[0];
+    out.textContent = 'Draw number ' + num + ' is on card ' + card + '. ' + (sale ? 'Sold online to ' + sale.name + ', phone ' + sale.phone + ' (sale #' + sale.no + ').' : state.physical[card] ? 'Sold as a printed card to ' + state.physical[card] + '.' : 'No sale recorded; whoever holds printed card ' + card + ' must show it.');
     log('holder_lookup', { tile: card }, num, 'draw number ' + num); save();
+  });
+  $('phys').addEventListener('submit', function(e){
+    e.preventDefault();
+    var c = parseInt($('physCard').value, 10), n = $('physName').value.trim(), out = $('physOut');
+    if (!(c >= MIN && c <= MAX)) { out.textContent = 'Enter a card number from ' + MIN + ' to ' + MAX + '.'; return; }
+    if (!n) { out.textContent = 'Enter the buyer\'s name.'; return; }
+    if (state.sold[c]) { out.textContent = 'Card ' + c + ' was already sold online. Do not hand out this printed card.'; return; }
+    if (state.physical[c]) { out.textContent = 'Card ' + c + ' is already recorded as sold to ' + state.physical[c] + '.'; return; }
+    state.physical[c] = n; log('printed_card_sold', { name: n, tile: c }, state.numbers[c], 'recorded by committee'); save();
+    out.textContent = 'Recorded: printed card ' + c + ' sold to ' + n + '. It has disappeared from the customer view.';
+    $('physCard').value = ''; $('physName').value = ''; renderAdmin();
   });
   function show(which){
     $('vCustomer').setAttribute('aria-selected', which === 'c');
