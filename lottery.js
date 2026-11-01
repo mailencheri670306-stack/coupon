@@ -35,14 +35,10 @@
       '<p class="notice" data-l="notice" hidden></p>' +
       '<p class="muted">Choose a card number below. Each card hides its own draw number, just like the scratch panel on a printed card. Tap a card, enter your details and it is revealed. Once a card is taken, online or as a printed card, it disappears from this list.</p>' +
     '</header>' +
-    '<section class="ticket" data-l="mine" hidden aria-live="polite">' +
-      '<span class="t-label">Your coupon</span>' +
-      '<div class="pair">' +
-        '<div><span class="cap">Card no.</span><span class="tileno" data-l="myTile"></span></div>' +
-        '<span class="arrow" aria-hidden="true">→</span>' +
-        '<div><span class="cap">Your draw number</span><span class="number won" data-l="myNum"></span></div>' +
-      '</div>' +
-      '<div class="t-foot"><span data-l="myDraw"></span><span>Take a screenshot to keep it</span></div>' +
+    '<section class="mycards" data-l="mine" hidden aria-live="polite">' +
+      '<span class="t-label" data-l="mineLabel">Your coupons on this phone</span>' +
+      '<div class="mylist" data-l="mineList"></div>' +
+      '<p class="t-note">Take a screenshot to keep them. To take another card, tap a free card below and enter a different phone number.</p>' +
     '</section>' +
     '<div class="err" data-l="err" hidden></div>' +
     '<div class="toolbar">' +
@@ -64,7 +60,7 @@
         '</div>' +
         '<form data-l="form" novalidate>' +
           '<label for="lName">Your name<input id="lName" data-l="name" autocomplete="name" maxlength="80"></label>' +
-          '<label for="lPhone">Phone number <span class="hint">Each phone number gets one card</span>' +
+          '<label for="lPhone">Phone number <span class="hint">One card per phone number. For another card, use a different number</span>' +
             '<input id="lPhone" data-l="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20"></label>' +
           '<label for="lCode" data-l="codeRow" hidden>Coupon code <span class="hint">Printed on your coupon, e.g. ABCD-2345</span>' +
             '<input id="lCode" data-l="code" autocapitalize="characters" autocomplete="off" maxlength="20"></label>' +
@@ -89,10 +85,17 @@
     var MIN = 100, MAX = 1300, FROM = 100, TO = 1300, TOTAL = 1201, requireCode = false, isOpen = true, numbersLeft = null;
     var used = {}, tiles = {}, current = null, busy = false, loaded = false;
     var reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-    var me = load();
+    var mine = load();
 
-    function load() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } }
-    function save() { try { if (me) localStorage.setItem(KEY, JSON.stringify(me)); else localStorage.removeItem(KEY); } catch (e) {} }
+    function load() {
+      try {
+        var v = JSON.parse(localStorage.getItem(KEY) || 'null');
+        if (!v) return [];
+        return Array.isArray(v) ? v : [v];
+      } catch (e) { return []; }
+    }
+    function isMine(v) { return mine.some(function (m) { return m.tile === v; }); }
+    function save() { try { if (mine.length) localStorage.setItem(KEY, JSON.stringify(mine)); else localStorage.removeItem(KEY); } catch (e) {} }
     function fmt(n) { return Number(n).toLocaleString('en-IN'); }
     function show(el, msg) { el.textContent = msg || ''; el.hidden = !msg; }
     function randInt(max) {
@@ -116,13 +119,13 @@
     function paint() {
       var usedCount = 0;
       for (var v = FROM; v <= TO; v++) {
-        var b = tiles[v], isUsed = !!used[v], mine = !!(me && me.tile === v);
+        var b = tiles[v], isUsed = !!used[v], mineT = isMine(v);
         if (isUsed) usedCount++;
-        b.disabled = isUsed || mine;
-        b.classList.toggle('mine', mine);
-        b.setAttribute('aria-label', 'Card ' + v + (mine ? ', your card' : isUsed ? ', taken' : ''));
+        b.disabled = isUsed || mineT;
+        b.classList.toggle('mine', mineT);
+        b.setAttribute('aria-label', 'Card ' + v + (mineT ? ', your card' : isUsed ? ', taken' : ''));
       }
-      $.grid.classList.toggle('locked', !!me || !isOpen);
+      $.grid.classList.toggle('locked', !isOpen);
       if (loaded) {
         var tilesLeft = TOTAL - usedCount;
         $.left.innerHTML = '';
@@ -132,11 +135,18 @@
       renderMine();
     }
     function renderMine() {
-      if (!me) { $.mine.hidden = true; return; }
+      if (!mine.length) { $.mine.hidden = true; return; }
       $.mine.hidden = false;
-      $.myTile.textContent = me.tile;
-      $.myNum.textContent = me.number;
-      $.myDraw.textContent = 'Online sale #' + me.drawNo;
+      $.mineLabel.textContent = mine.length === 1 ? 'Your coupon on this phone' : 'Your ' + mine.length + ' coupons on this phone';
+      $.mineList.textContent = '';
+      mine.forEach(function (m) {
+        var row = document.createElement('div'); row.className = 'pair';
+        row.innerHTML = '<div><span class="cap">Card no.</span><span class="tileno"></span></div><span class="arrow" aria-hidden="true">→</span><div><span class="cap">Draw number</span><span class="number won"></span></div>';
+        row.querySelector('.tileno').textContent = m.tile;
+        row.querySelector('.number').textContent = m.number;
+        if (m.phone) { var ph = document.createElement('span'); ph.className = 'ph'; ph.textContent = 'Phone ' + m.phone; row.appendChild(ph); }
+        $.mineList.appendChild(row);
+      });
     }
 
     function applyStatus(s) {
@@ -152,8 +162,7 @@
       (s.usedTiles || []).forEach(function (v) { used[v] = true; });
       loaded = true;
       paint();
-      if (me) show($.err, '');
-      else if (!isOpen) show($.err, 'Online sales are closed right now.');
+      if (!isOpen) show($.err, 'Online sales are closed right now.');
       else if (numbersLeft === 0) show($.err, 'All cards have been taken.');
       else show($.err, '');
       if (current && used[current] && !busy && $.done.hidden) {
@@ -170,7 +179,6 @@
 
     // ---------- pick sheet
     function openSheet(v) {
-      if (me) { show($.err, 'You already have card ' + me.tile + '. Each person gets one card.'); $.err.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' }); return; }
       if (!isOpen || used[v]) return;
       current = v;
       $.sheetTitle.textContent = 'Card ' + v;
@@ -179,7 +187,8 @@
       show($.sheetErr, ''); $.form.hidden = false; $.done.hidden = true;
       $.sheet.hidden = false;
       document.body.style.overflow = 'hidden';
-      setTimeout(function () { ($.name.value ? $.go : $.name).focus(); }, 30);
+      if (mine.length) $.phone.value = '';
+      setTimeout(function () { ($.name.value ? ($.phone.value ? $.go : $.phone) : $.name).focus(); }, 30);
     }
     function closeSheet() {
       if (busy) return;
@@ -209,7 +218,7 @@
         busy = false; $.close.disabled = false;
         $.go.textContent = 'Reveal my number';
         if (result.status === 'assigned' || result.status === 'existing') {
-          me = { tile: result.tile, number: result.number, drawNo: result.drawNo };
+          if (!isMine(result.tile)) mine.push({ tile: result.tile, number: result.number, drawNo: result.drawNo, phone: phone });
           save();
           used[result.tile] = true;
           n.textContent = result.number; n.className = 'number won';
@@ -219,7 +228,7 @@
             $.doneMsg.textContent = 'Your draw number is ' + result.number + '. Card ' + result.tile + ' is now yours, so nobody else can get it or this number.';
           } else {
             $.sheetTitle.textContent = 'You already have a card';
-            $.doneMsg.textContent = 'This phone number already has card ' + result.tile + ' with draw number ' + result.number + '. Each person gets one card.';
+            $.doneMsg.textContent = 'This phone number already has card ' + result.tile + ' with draw number ' + result.number + '. Each phone number gets one card, so use a different phone number to take another card.';
           }
           paint();
           $.doneBtn.focus();
@@ -278,7 +287,7 @@
     return {
       refresh: refresh,
       resetMe: function () {
-        me = null; save(); closeSheet();
+        mine = []; save(); closeSheet();
         $.name.value = ''; $.phone.value = ''; $.code.value = '';
         show($.err, ''); paint();
       }
