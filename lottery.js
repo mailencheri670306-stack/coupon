@@ -38,7 +38,7 @@
     '<section class="mycards" data-l="mine" hidden aria-live="polite">' +
       '<span class="t-label" data-l="mineLabel">Your coupons on this phone</span>' +
       '<div class="mylist" data-l="mineList"></div>' +
-      '<p class="t-note">Take a screenshot to keep them. To take another card, tap a free card below and enter a different phone number.</p>' +
+      '<p class="t-note" data-l="mineNote">Take a screenshot to keep them. To take another card, tap a free card below and enter a different phone number.</p>' +
     '</section>' +
     '<div class="err" data-l="err" hidden></div>' +
     '<div class="toolbar">' +
@@ -60,9 +60,9 @@
         '</div>' +
         '<form data-l="form" novalidate>' +
           '<label for="lName">Your name<input id="lName" data-l="name" autocomplete="name" maxlength="80"></label>' +
-          '<label for="lPhone">Phone number <span class="hint">One card per phone number. For another card, use a different number</span>' +
+          '<label for="lPhone">Phone number <span class="hint" data-l="phoneHint">One card per phone number. For another card, use a different number</span>' +
             '<input id="lPhone" data-l="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20"></label>' +
-          '<label for="lCode" data-l="codeRow" hidden>Coupon code <span class="hint">Printed on your coupon, e.g. ABCD-2345</span>' +
+          '<label for="lCode" data-l="codeRow" hidden>Coupon code <span class="hint">From the temple committee after payment, e.g. ABCD-2345. Each code gives one card</span>' +
             '<input id="lCode" data-l="code" autocapitalize="characters" autocomplete="off" maxlength="20"></label>' +
           '<div class="err" data-l="sheetErr" hidden></div>' +
           '<button class="btn" type="submit" data-l="go">Reveal my number</button>' +
@@ -157,6 +157,8 @@
       if (s.title) { $.title.textContent = s.title; document.title = s.title; }
       show($.drawInfo, s.drawInfo || '');
       $.codeRow.hidden = !requireCode;
+      $.phoneHint.textContent = requireCode ? 'So the committee can reach you' : 'One card per phone number. For another card, use a different number';
+      $.mineNote.textContent = requireCode ? 'Take a screenshot to keep them. To take another card, tap a free card below and enter your next coupon code.' : 'Take a screenshot to keep them. To take another card, tap a free card below and enter a different phone number.';
       if (!loaded || rangeChanged) buildGrid();
       used = {};
       (s.usedTiles || []).forEach(function (v) { used[v] = true; });
@@ -187,7 +189,8 @@
       show($.sheetErr, ''); $.form.hidden = false; $.done.hidden = true;
       $.sheet.hidden = false;
       document.body.style.overflow = 'hidden';
-      if (mine.length) $.phone.value = '';
+      if (mine.length && !requireCode) $.phone.value = '';
+      if (requireCode) $.code.value = '';
       setTimeout(function () { ($.name.value ? ($.phone.value ? $.go : $.phone) : $.name).focus(); }, 30);
     }
     function closeSheet() {

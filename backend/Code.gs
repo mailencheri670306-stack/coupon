@@ -26,7 +26,7 @@ const LOG_HEADERS = ['Time (UTC)', 'Event', 'Name', 'Phone', 'Coupon code', 'Car
 const POOL_HEADERS = ['Card number', 'Channel', 'Draw number (hidden)', 'Status', 'Draw #', 'Sold at (UTC)'];
 const PRINT_HEADERS = ['Card number', 'Scratch number', 'Status (set by script)', 'Sold to (name)', 'Phone', 'Notes'];
 const SOLD_ONLINE_MARK = 'SOLD ONLINE – do not sell';
-const CODE_HEADERS = ['Code', 'Status', 'Used by phone', 'Used at (UTC)', 'Card'];
+const CODE_HEADERS = ['Code', 'Status', 'Used by phone', 'Used at (UTC)', 'Card', 'Given to (committee notes)'];
 const STATUS_CACHE_KEY = 'status-v3';
 
 // ---------------------------------------------------------------- web app
@@ -123,10 +123,10 @@ function draw(form) {
     if (!s.open) { log_('rejected_draw_closed', who, device); return { status: 'closed', message: 'Online sales are closed right now.' }; }
     if (isNaN(tile) || tile < s.onlineFrom || tile > s.onlineTo) { log_('rejected_not_online_card', who, device); return { status: 'error', message: 'That card isn\'t sold online. Please choose a card from the list.' }; }
 
-    // One card per phone number
+    // One card per phone number (when coupon codes are required, each code gives one card instead)
     const draws = sheet_(SHEETS.draws);
     const dn = draws.getLastRow() - 1;
-    if (dn > 0) {
+    if (dn > 0 && !s.requireCode) {
       const prior = draws.getRange(2, 1, dn, 5).getValues().find(r => String(r[4]) === phone);
       if (prior) {
         log_('repeat_attempt_returned_existing', who, device, 'already has card ' + prior[1], prior[2]);
@@ -368,17 +368,32 @@ function generateCodes() {
   const r = ui.prompt('Generate coupon codes', 'How many one-time codes? (1–2000)', ui.ButtonSet.OK_CANCEL);
   if (r.getSelectedButton() !== ui.Button.OK) return;
   const n = Math.min(2000, Math.max(1, parseInt(r.getResponseText(), 10) || 0));
+  addCodes_(n);
+  ui.alert(n + ' codes added to the Codes sheet. Set require_code to TRUE in Settings to make customers use them.');
+}
+
+/** Run from the Apps Script editor: adds 100 new one-time codes to the Codes tab. */
+function make100Codes() { addCodes_(100); Logger.log('100 codes added to the Codes tab.'); }
+/** Run from the Apps Script editor: adds 600 new one-time codes to the Codes tab. */
+function make600Codes() { addCodes_(600); Logger.log('600 codes added to the Codes tab.'); }
+
+function addCodes_(n) {
   const codes = sheet_(SHEETS.codes);
+  if (codes.getRange(1, 6).getValue() === '') codes.getRange(1, 1, 1, CODE_HEADERS.length).setValues([CODE_HEADERS]).setFontWeight('bold');
+  const existing = {};
+  if (codes.getLastRow() > 1) codes.getRange(2, 1, codes.getLastRow() - 1, 1).getValues().forEach(r => existing[r[0]] = true);
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const rows = [];
-  for (let i = 0; i < n; i++) {
+  while (rows.length < n) {
     let c = '';
     for (let j = 0; j < 8; j++) c += alphabet[secureRandomInt_(alphabet.length)];
-    rows.push([c.slice(0, 4) + '-' + c.slice(4), 'unused', '', '', '']);
+    c = c.slice(0, 4) + '-' + c.slice(4);
+    if (existing[c]) continue;
+    existing[c] = true;
+    rows.push([c, 'unused', '', '', '', '']);
   }
-  codes.getRange(codes.getLastRow() + 1, 1, n, 5).setValues(rows);
-  log_('codes_generated_by_admin', {}, '', n + ' codes');
-  ui.alert(n + ' codes added to the Codes sheet. Set require_code to TRUE in Settings to make customers use them.');
+  codes.getRange(codes.getLastRow() + 1, 1, n, CODE_HEADERS.length).setValues(rows);
+  log_('codes_generated', {}, '', n + ' codes');
 }
 
 function integrityCheck() {
@@ -420,7 +435,7 @@ function integrityCheck() {
     if (no !== i + 1) issues.push('Draws row ' + (i + 2) + ': sale # is ' + no + ', expected ' + (i + 1) + '.');
     if (numberOf[card] !== num) issues.push('Card ' + card + ' revealed ' + num + ', but its fixed draw number is ' + numberOf[card] + '.');
     if (seenCard[card]) issues.push('Card ' + card + ' was sold online twice (sales #' + seenCard[card] + ' and #' + no + ').');
-    if (seenPhone[phone]) issues.push('Phone ' + phone + ' bought online twice (sales #' + seenPhone[phone] + ' and #' + no + ').');
+    if (seenPhone[phone] && !s.requireCode) issues.push('Phone ' + phone + ' bought online twice (sales #' + seenPhone[phone] + ' and #' + no + ').');
     if (physical[card]) issues.push('Card ' + card + ' is recorded as sold BOTH online (sale #' + no + ') and as a printed card (Print row ' + physical[card].row + ').');
     seenCard[card] = no; seenPhone[phone] = no;
   });
