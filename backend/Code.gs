@@ -171,7 +171,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Generate coupon codes…', 'generateCodes')
     .addSeparator()
-    .addItem('Set up (first time) / clear online sales…', 'setup')
+    .addItem('Set up (first time) / clear online sales…', 'setupFromMenu')
     .addItem('Generate new card numbers (before printing only)…', 'regenerateNumbers')
     .addToUi();
 }
@@ -180,11 +180,16 @@ function onOpen() {
  * First run: creates all tabs and the fixed card → number list.
  * Later runs: clears online sales and the log but KEEPS the card numbers, so printed cards stay valid.
  */
-function setup() {
+/** Run this from the Apps Script editor (Run ▶ with "setup" selected). Results appear in the Execution log. */
+function setup() { setup_(false); }
+/** Used by the Lottery menu in the spreadsheet. */
+function setupFromMenu() { setup_(true); }
+
+function setup_(fromMenu) {
   const ss = ss_();
   const props = PropertiesService.getScriptProperties();
   let ui = null;
-  try { ui = SpreadsheetApp.getUi(); } catch (e) {}
+  if (fromMenu) { try { ui = SpreadsheetApp.getUi(); } catch (e) {} }
 
   const existing = ss.getSheetByName(SHEETS.draws);
   if (existing && existing.getLastRow() > 1) {
@@ -241,7 +246,7 @@ function setup() {
     'cards ' + s.min + '–' + s.max + ', online ' + s.onlineFrom + '–' + s.onlineTo + ', numbers fingerprint ' + props.getProperty('MAPPING_HASH').slice(0, 16));
   const def = ss.getSheetByName('Sheet1');
   if (def && def.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(def);
-  alert_('Ready',
+  (ui ? alert_ : (t, m) => Logger.log(t + '\n' + m))('Ready',
     'Spreadsheet: ' + ss.getUrl() + '\n\n' + (hasNumbers ? 'Online sales cleared. Card numbers are unchanged.' :
       'Card numbers and hidden draw numbers created for ' + s.min + '–' + s.max + '. Online: ' + s.onlineFrom + '–' + s.onlineTo + '. The Print tab lists the scratch cards to print.') +
     '\n\nIf you have not deployed yet: Deploy → New deployment → Web app, Execute as: Me, Who has access: Anyone.');
