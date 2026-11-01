@@ -181,13 +181,14 @@ function onOpen() {
  * Later runs: clears online sales and the log but KEEPS the card numbers, so printed cards stay valid.
  */
 function setup() {
-  const ui = SpreadsheetApp.getUi();
-  const ss = SpreadsheetApp.getActive();
+  const ss = ss_();
   const props = PropertiesService.getScriptProperties();
-  props.setProperty('SHEET_ID', ss.getId());
+  let ui = null;
+  try { ui = SpreadsheetApp.getUi(); } catch (e) {}
 
   const existing = ss.getSheetByName(SHEETS.draws);
   if (existing && existing.getLastRow() > 1) {
+    if (!ui) { Logger.log('Online sales exist. Run "Set up / clear online sales" from the Lottery menu in the spreadsheet to clear them.'); return; }
     const r = ui.alert('Clear online sales?', 'This erases all ' + (existing.getLastRow() - 1) + ' online sales and the log, and makes every online card available again. Card numbers and scratch numbers stay the same. This cannot be undone; download a copy first if you need the records.', ui.ButtonSet.YES_NO);
     if (r !== ui.Button.YES) return;
   }
@@ -240,11 +241,10 @@ function setup() {
     'cards ' + s.min + '–' + s.max + ', online ' + s.onlineFrom + '–' + s.onlineTo + ', numbers fingerprint ' + props.getProperty('MAPPING_HASH').slice(0, 16));
   const def = ss.getSheetByName('Sheet1');
   if (def && def.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(def);
-  ui.alert('Ready',
-    (hasNumbers ? 'Online sales cleared. Card numbers are unchanged.' :
+  alert_('Ready',
+    'Spreadsheet: ' + ss.getUrl() + '\n\n' + (hasNumbers ? 'Online sales cleared. Card numbers are unchanged.' :
       'Card numbers and hidden draw numbers created for ' + s.min + '–' + s.max + '. Online: ' + s.onlineFrom + '–' + s.onlineTo + '. The Print tab lists the scratch cards to print.') +
-    '\n\nIf you have not deployed yet: Deploy → New deployment → Web app, Execute as: Me, Who has access: Anyone.',
-    ui.ButtonSet.OK);
+    '\n\nIf you have not deployed yet: Deploy → New deployment → Web app, Execute as: Me, Who has access: Anyone.');
 }
 
 /** Replaces every card's hidden number. Only allowed before cards are printed. */
@@ -259,7 +259,7 @@ function regenerateNumbers() {
   const lock = LockService.getScriptLock();
   lock.waitLock(25000);
   try {
-    writeNewNumbers_(SpreadsheetApp.getActive(), s);
+    writeNewNumbers_(ss_(), s);
     log_('numbers_regenerated_by_admin', {}, '', 'numbers fingerprint ' + PropertiesService.getScriptProperties().getProperty('MAPPING_HASH').slice(0, 16));
     CacheService.getScriptCache().remove(STATUS_CACHE_KEY);
   } finally { lock.releaseLock(); }
@@ -414,8 +414,20 @@ function integrityCheck() {
 // ---------------------------------------------------------------- helpers
 
 function ss_() {
-  const id = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
-  return id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActive();
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty('SHEET_ID');
+  if (id) return SpreadsheetApp.openById(id);
+  let ss = null;
+  try { ss = SpreadsheetApp.getActive(); } catch (e) {}
+  if (!ss) ss = SpreadsheetApp.create('Coupon 2027');
+  props.setProperty('SHEET_ID', ss.getId());
+  return ss;
+}
+
+/** Shows a message in the spreadsheet when it is open; otherwise writes it to the Apps Script execution log. */
+function alert_(title, msg) {
+  try { SpreadsheetApp.getUi().alert(title, msg, SpreadsheetApp.getUi().ButtonSet.OK); }
+  catch (e) { Logger.log(title + '\n' + msg); }
 }
 function sheet_(name) {
   const sh = ss_().getSheetByName(name);
